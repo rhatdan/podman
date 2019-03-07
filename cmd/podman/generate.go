@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/containers/libpod/cmd/podman/cliconfig"
+	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -12,6 +13,9 @@ var (
 		Use:   "generate",
 		Short: "Generated structured data",
 		Long:  generateDescription,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return errors.Errorf("unrecognized command `podman generate %s`\nTry 'podman generate --help' for more information.", args[0])
+		},
 	}
 )
 

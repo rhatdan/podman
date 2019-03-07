@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/containers/libpod/cmd/podman/cliconfig"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -15,9 +14,7 @@ var (
 			Use:   "image",
 			Short: "Manage images",
 			Long:  imageDescription,
-			RunE: func(cmd *cobra.Command, args []string) error {
-				return errors.Errorf("unrecognized command `podman image %s`\nTry 'podman image --help' for more information.", args[0])
-			},
+			RunE:  badSubArg,
 		},
 	}
 	imagesSubCommand  cliconfig.ImagesValues

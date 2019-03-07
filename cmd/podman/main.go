@@ -82,9 +82,7 @@ var cmdsNotRequiringRootless = map[*cobra.Command]bool{
 var rootCmd = &cobra.Command{
 	Use:  "podman",
 	Long: "manage pods and images",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		return errors.Errorf("unrecognized command 'podman %s'\nTry 'podman --help' for more information.", args[0])
-	},
+	RunE: badSubArg,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		return before(cmd, args)
 	},

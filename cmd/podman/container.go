@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/containers/libpod/cmd/podman/cliconfig"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -16,9 +15,7 @@ var (
 			Short:            "Manage Containers",
 			Long:             containerDescription,
 			TraverseChildren: true,
-			RunE: func(cmd *cobra.Command, args []string) error {
-				return errors.Errorf("unrecognized command `podman container %s`\nTry 'podman container --help' for more information.", args[0])
-			},
+			RunE:             badSubArg,
 		},
 	}
 

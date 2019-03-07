@@ -2,7 +2,6 @@ package main
 
 import (
 	"github.com/containers/libpod/cmd/podman/cliconfig"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -15,9 +14,7 @@ var (
 			Use:   "trust",
 			Short: "Manage container image trust policy",
 			Long:  trustDescription,
-			RunE: func(cmd *cobra.Command, args []string) error {
-				return errors.Errorf("unrecognized command `podman image trust %s`\nTry 'podman image trust --help' for more information.", args[0])
-			},
+			RunE:  badSubArg,
 		},
 	}
 )

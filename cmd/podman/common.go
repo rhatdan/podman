@@ -67,6 +67,19 @@ func noSubArgs(c *cobra.Command, args []string) error {
 	return nil
 }
 
+/// badSubArg complains about unrecognized commands or subcommands
+func badSubArg(c *cobra.Command, args []string) error {
+	var msg string
+
+	if len(args) > 0 {
+		msg = fmt.Sprintf("unrecognized command `%s %s`", c.CommandPath(), args[0])
+	} else {
+		msg = fmt.Sprintf("`%s` requires a subcommand", c.CommandPath())
+	}
+
+	return errors.Errorf(msg + "\nTry '%s --help' for more information", c.CommandPath())
+}
+
 // getAllOrLatestContainers tries to return the correct list of containers
 // depending if --all, --latest or <container-id> is used.
 // It requires the Context (c) and the Runtime (runtime). As different

@@ -2,7 +2,6 @@ package main
 
 import (
 	"github.com/containers/libpod/cmd/podman/cliconfig"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -14,9 +13,7 @@ var podCommand = cliconfig.PodmanCommand{
 		Use:   "pod",
 		Short: "Manage pods",
 		Long:  podDescription,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return errors.Errorf("unrecognized command `podman pod %s`\nTry 'podman pod --help' for more information.", args[0])
-		},
+		RunE:  badSubArg,
 	},
 }
 

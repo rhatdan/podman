@@ -2,7 +2,6 @@ package main
 
 import (
 	"github.com/containers/libpod/cmd/podman/cliconfig"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -13,9 +12,7 @@ var (
 		Use:   "play",
 		Short: "Play a pod",
 		Long:  playDescription,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return errors.Errorf("unrecognized command `podman play %s`\nTry 'podman play --help' for more information.", args[0])
-		},
+		RunE:  badSubArg,
 	}
 )
 

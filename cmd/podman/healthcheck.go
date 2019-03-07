@@ -2,7 +2,6 @@ package main
 
 import (
 	"github.com/containers/libpod/cmd/podman/cliconfig"
-	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 )
 
@@ -12,9 +11,7 @@ var healthcheckCommand = cliconfig.PodmanCommand{
 		Use:   "healthcheck",
 		Short: "Manage Healthcheck",
 		Long:  healthcheckDescription,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return errors.Errorf("unrecognized command `podman healthcheck %s`\nTry 'podman healthcheck --help' for more information.", args[0])
-		},
+		RunE:  badSubArg,
 	},
 }
 

@@ -31,33 +31,33 @@ func DeviceFromPath(path, permissions string) (*configs.Device, error) {
 	}
 
 	var (
-		devType   configs.DeviceType
-		mode      = stat.Mode
 		devNumber = uint64(stat.Rdev)
 		major     = unix.Major(devNumber)
 		minor     = unix.Minor(devNumber)
 	)
-	switch {
-	case mode&unix.S_IFBLK == unix.S_IFBLK:
-		devType = configs.BlockDevice
-	case mode&unix.S_IFCHR == unix.S_IFCHR:
-		devType = configs.CharDevice
-	case mode&unix.S_IFIFO == unix.S_IFIFO:
-		devType = configs.FifoDevice
-	default:
+	if major == 0 {
 		return nil, ErrNotADevice
 	}
+
+	var (
+		devType rune
+		mode    = stat.Mode
+	)
+	switch {
+	case mode&unix.S_IFBLK == unix.S_IFBLK:
+		devType = 'b'
+	case mode&unix.S_IFCHR == unix.S_IFCHR:
+		devType = 'c'
+	}
 	return &configs.Device{
-		DeviceRule: configs.DeviceRule{
-			Type:        devType,
-			Major:       int64(major),
-			Minor:       int64(minor),
-			Permissions: configs.DevicePermissions(permissions),
-		},
-		Path:     path,
-		FileMode: os.FileMode(mode),
-		Uid:      stat.Uid,
-		Gid:      stat.Gid,
+		Type:        devType,
+		Path:        path,
+		Major:       int64(major),
+		Minor:       int64(minor),
+		Permissions: permissions,
+		FileMode:    os.FileMode(mode),
+		Uid:         stat.Uid,
+		Gid:         stat.Gid,
 	}, nil
 }
 

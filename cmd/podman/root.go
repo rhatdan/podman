@@ -306,14 +306,6 @@ func rootFlags(cmd *cobra.Command, opts *entities.PodmanConfig) {
 }
 
 func resolveDestination() (string, string, string) {
-	if uri, found := os.LookupEnv("CONTAINER_HOST"); found {
-		var ident string
-		if v, found := os.LookupEnv("CONTAINER_SSHKEY"); found {
-			ident = v
-		}
-		return "", uri, ident
-	}
-
 	cfg, err := config.ReadCustomConfig()
 	if err != nil {
 		logrus.Warning(errors.Wrap(err, "unable to read local containers.conf"))

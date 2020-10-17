@@ -248,7 +248,7 @@ sub podman_help {
                     unless $subcommand eq 'help';       # 'help' not in man
             }
         }
-        elsif ($section eq 'flags') {
+        elsif ($section eq 'options') {
             # Handle '--foo' or '-f, --foo'
             if ($line =~ /^\s{1,10}(--\S+)\s/) {
                 print "> podman @_ $1\n"                        if $debug;
@@ -322,7 +322,7 @@ sub podman_man {
 
         # Options should always be of the form '**-f**' or '**--flag**',
         # possibly separated by comma-space.
-        elsif ($section eq 'flags') {
+        elsif ($section eq 'options') {
             # e.g. 'podman run --ip6', documented in man page, but nonexistent
             if ($line =~ /^not\s+implemented/i) {
                 delete $man{$_} for @most_recent_flags;

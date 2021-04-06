@@ -524,6 +524,13 @@ VOLUME /test/`, ALPINE)
 		session.WaitWithDefaultTimeout()
 		Expect(session.ExitCode()).To(Equal(0))
 
+		os.Chown(mountPath, 5432, 1010)
+		session = podmanTest.Podman([]string{"run", "--rm", "-v", fmt.Sprintf("%s:/run/test:O", mountPath), ALPINE, "ls", "-nld", "/run/test"})
+		session.WaitWithDefaultTimeout()
+		Expect(session.ExitCode()).To(Equal(0))
+		Expect(session.LineInOutputContains("5432")).To(BeTrue())
+		Expect(session.LineInOutputContains("1010")).To(BeTrue())
+
 		// Make sure modifications in container do not show up on host
 		session = podmanTest.Podman([]string{"run", "--rm", "-v", fmt.Sprintf("%s:/run/test:O", mountPath), ALPINE, "touch", "/run/test/container"})
 		session.WaitWithDefaultTimeout()

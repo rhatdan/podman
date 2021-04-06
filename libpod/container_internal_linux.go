@@ -44,6 +44,7 @@ import (
 	"github.com/containers/podman/v3/version"
 	"github.com/containers/storage/pkg/archive"
 	"github.com/containers/storage/pkg/idtools"
+	"github.com/containers/storage/pkg/system"
 	securejoin "github.com/cyphar/filepath-securejoin"
 	runcuser "github.com/opencontainers/runc/libcontainer/user"
 	spec "github.com/opencontainers/runtime-spec/specs-go"
@@ -435,11 +436,16 @@ func (c *Container) generateSpec(ctx context.Context) (*spec.Spec, error) {
 
 	// Add overlay volumes
 	for _, overlayVol := range c.config.OverlayVolumes {
-		contentDir, err := overlay.TempDir(c.config.StaticDir, c.RootUID(), c.RootGID())
+		st, err := system.Stat(overlayVol.Source)
 		if err != nil {
 			return nil, err
 		}
-		overlayMount, err := overlay.Mount(contentDir, overlayVol.Source, overlayVol.Dest, c.RootUID(), c.RootGID(), c.runtime.store.GraphOptions())
+
+		contentDir, err := overlay.TempDir(c.config.StaticDir, int(st.UID()), int(st.GID()))
+		if err != nil {
+			return nil, err
+		}
+		overlayMount, err := overlay.Mount(contentDir, overlayVol.Source, overlayVol.Dest, int(st.UID()), int(st.GID()), c.runtime.store.GraphOptions())
 		if err != nil {
 			return nil, errors.Wrapf(err, "mounting overlay failed %q", overlayVol.Source)
 		}

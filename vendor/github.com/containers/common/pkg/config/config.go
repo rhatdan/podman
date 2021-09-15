@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -23,7 +24,7 @@ const (
 	_configPath = "containers/containers.conf"
 	// DefaultContainersConfig holds the default containers config path
 	DefaultContainersConfig = "/usr/share/" + _configPath
-	// OverrideContainersConfig holds the default config paths overridden by the root user
+	// OverrideContainersConfig holds the default config path overridden by the root user
 	OverrideContainersConfig = "/etc/" + _configPath
 	// UserOverrideContainersConfig holds the containers config path overridden by the rootless user
 	UserOverrideContainersConfig = ".config/" + _configPath
@@ -55,6 +56,8 @@ type Config struct {
 	Engine EngineConfig `toml:"engine"`
 	// Network section defines the configuration of CNI Plugins
 	Network NetworkConfig `toml:"network"`
+	// Secret section defines configurations for the secret management
+	Secrets SecretConfig `toml:"secrets"`
 }
 
 // ContainersConfig represents the "containers" TOML config table
@@ -137,6 +140,11 @@ type ContainersConfig struct {
 	// Negative values indicate that the log file won't be truncated.
 	LogSizeMax int64 `toml:"log_size_max,omitempty"`
 
+	// Specifies default format tag for container log messages.
+	// This is useful for creating a specific tag for container log messages.
+	// Containers logs default to truncated container ID as a tag.
+	LogTag string `toml:"log_tag,omitempty"`
+
 	// NetNS indicates how to create a network namespace for the container
 	NetNS string `toml:"netns,omitempty"`
 
@@ -150,9 +158,16 @@ type ContainersConfig struct {
 	// PidNS indicates how to create a pid namespace for the container
 	PidNS string `toml:"pidns,omitempty"`
 
+	// Copy the content from the underlying image into the newly created
+	// volume when the container is created instead of when it is started.
+	// If false, the container engine will not copy the content until
+	// the container is started. Setting it to true may have negative
+	// performance implications.
+	PrepareVolumeOnCreate bool `toml:"prepare_volume_on_create,omitempty"`
+
 	// RootlessNetworking depicts the "kind" of networking for rootless
 	// containers.  Valid options are `slirp4netns` and `cni`. Default is
-	// `slirp4netns`
+	// `slirp4netns` on Linux, and `cni` on non-Linux OSes.
 	RootlessNetworking string `toml:"rootless_networking,omitempty"`
 
 	// SeccompProfile is the seccomp.json profile path which is used as the
@@ -219,6 +234,10 @@ type EngineConfig struct {
 	// EventsLogger determines where events should be logged.
 	EventsLogger string `toml:"events_logger,omitempty"`
 
+	// HelperBinariesDir is a list of directories which are used to search for
+	// helper binaries.
+	HelperBinariesDir []string `toml:"helper_binaries_dir"`
+
 	// configuration files. When the same filename is present in in
 	// multiple directories, the file in the directory listed last in
 	// this slice takes precedence.
@@ -258,6 +277,9 @@ type EngineConfig struct {
 
 	// MachineEnabled indicates if Podman is running in a podman-machine VM
 	MachineEnabled bool `toml:"machine_enabled,omitempty"`
+
+	// MachineImage is the image used when creating a podman-machine VM
+	MachineImage string `toml:"machine_image,omitempty"`
 
 	// MultiImageArchive - if true, the container engine allows for storing
 	// archives (e.g., of the docker-archive transport) with multiple
@@ -376,6 +398,10 @@ type EngineConfig struct {
 	// will refer to the plugin as) mapped to a path, which must point to a
 	// Unix socket that conforms to the Volume Plugin specification.
 	VolumePlugins map[string]string `toml:"volume_plugins,omitempty"`
+
+	// ChownCopiedFiles tells the container engine whether to chown files copied
+	// into a container to the container's primary uid/gid.
+	ChownCopiedFiles bool `toml:"chown_copied_files"`
 }
 
 // SetOptions contains a subset of options in a Config. It's used to indicate if
@@ -438,6 +464,17 @@ type NetworkConfig struct {
 
 	// NetworkConfigDir is where CNI network configuration files are stored.
 	NetworkConfigDir string `toml:"network_config_dir,omitempty"`
+}
+
+// SecretConfig represents the "secret" TOML config table
+type SecretConfig struct {
+	// Driver specifies the secret driver to use.
+	// Current valid value:
+	//  * file
+	//  * pass
+	Driver string `toml:"driver,omitempty"`
+	// Opts contains driver specific options
+	Opts map[string]string `toml:"opts,omitempty"`
 }
 
 // Destination represents destination for remote service
@@ -507,16 +544,61 @@ func NewConfig(userConfigPath string) (*Config, error) {
 // the defaults from the config parameter will be used for all other fields.
 func readConfigFromFile(path string, config *Config) error {
 	logrus.Tracef("Reading configuration file %q", path)
-	if _, err := toml.DecodeFile(path, config); err != nil {
+	meta, err := toml.DecodeFile(path, config)
+	if err != nil {
 		return errors.Wrapf(err, "decode configuration %v", path)
 	}
+	keys := meta.Undecoded()
+	if len(keys) > 0 {
+		logrus.Warningf("Failed to decode the keys %q from %q.", keys, path)
+	}
+
 	return nil
+}
+
+// addConfigs will search one level in the config dirPath for config files
+// If the dirPath does not exist, addConfigs will return nil
+func addConfigs(dirPath string, configs []string) ([]string, error) {
+	newConfigs := []string{}
+
+	err := filepath.Walk(dirPath,
+		// WalkFunc to read additional configs
+		func(path string, info os.FileInfo, err error) error {
+			switch {
+			case err != nil:
+				// return error (could be a permission problem)
+				return err
+			case info == nil:
+				// this should only happen when err != nil but let's be sure
+				return nil
+			case info.IsDir():
+				if path != dirPath {
+					// make sure to not recurse into sub-directories
+					return filepath.SkipDir
+				}
+				// ignore directories
+				return nil
+			default:
+				// only add *.conf files
+				if strings.HasSuffix(path, ".conf") {
+					newConfigs = append(newConfigs, path)
+				}
+				return nil
+			}
+		},
+	)
+	if os.IsNotExist(err) {
+		err = nil
+	}
+	sort.Strings(newConfigs)
+	return append(configs, newConfigs...), err
 }
 
 // Returns the list of configuration files, if they exist in order of hierarchy.
 // The files are read in order and each new file can/will override previous
 // file settings.
 func systemConfigs() ([]string, error) {
+	var err error
 	configs := []string{}
 	path := os.Getenv("CONTAINERS_CONF")
 	if path != "" {
@@ -531,13 +613,22 @@ func systemConfigs() ([]string, error) {
 	if _, err := os.Stat(OverrideContainersConfig); err == nil {
 		configs = append(configs, OverrideContainersConfig)
 	}
-	path, err := ifRootlessConfigPath()
+	configs, err = addConfigs(OverrideContainersConfig+".d", configs)
+	if err != nil {
+		return nil, err
+	}
+
+	path, err = ifRootlessConfigPath()
 	if err != nil {
 		return nil, err
 	}
 	if path != "" {
 		if _, err := os.Stat(path); err == nil {
 			configs = append(configs, path)
+		}
+		configs, err = addConfigs(path+".d", configs)
+		if err != nil {
+			return nil, err
 		}
 	}
 	return configs, nil
@@ -553,9 +644,14 @@ func (c *Config) CheckCgroupsAndAdjustConfig() {
 
 	session := os.Getenv("DBUS_SESSION_BUS_ADDRESS")
 	hasSession := session != ""
-	if hasSession && strings.HasPrefix(session, "unix:path=") {
-		_, err := os.Stat(strings.TrimPrefix(session, "unix:path="))
-		hasSession = err == nil
+	if hasSession {
+		for _, part := range strings.Split(session, ",") {
+			if strings.HasPrefix(part, "unix:path=") {
+				_, err := os.Stat(strings.TrimPrefix(part, "unix:path="))
+				hasSession = err == nil
+				break
+			}
+		}
 	}
 
 	if !hasSession && unshare.GetRootlessUID() != 0 {
@@ -602,8 +698,8 @@ func (c *Config) Validate() error {
 }
 
 func (c *EngineConfig) findRuntime() string {
-	// Search for crun first followed by runc and kata
-	for _, name := range []string{"crun", "runc", "kata"} {
+	// Search for crun first followed by runc, kata, runsc
+	for _, name := range []string{"crun", "runc", "kata", "runsc"} {
 		for _, v := range c.OCIRuntimes[name] {
 			if _, err := os.Stat(v); err == nil {
 				return name
@@ -686,7 +782,7 @@ func (c *NetworkConfig) Validate() error {
 		}
 	}
 
-	if stringsEq(c.CNIPluginDirs, cniBinDir) {
+	if stringsEq(c.CNIPluginDirs, DefaultCNIPluginDirs) {
 		return nil
 	}
 
@@ -986,7 +1082,7 @@ func (c *Config) Write() error {
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	configFile, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0600)
+	configFile, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0644)
 	if err != nil {
 		return err
 	}
@@ -1033,4 +1129,22 @@ func (c *Config) ActiveDestination() (uri, identity string, err error) {
 		return c.Engine.RemoteURI, c.Engine.RemoteIdentity, nil
 	}
 	return "", "", errors.New("no service destination configured")
+}
+
+// FindHelperBinary will search the given binary name in the configured directories.
+// If searchPATH is set to true it will also search in $PATH.
+func (c *Config) FindHelperBinary(name string, searchPATH bool) (string, error) {
+	for _, path := range c.Engine.HelperBinariesDir {
+		fullpath := filepath.Join(path, name)
+		if fi, err := os.Stat(fullpath); err == nil && fi.Mode().IsRegular() {
+			return fullpath, nil
+		}
+	}
+	if searchPATH {
+		return exec.LookPath(name)
+	}
+	if len(c.Engine.HelperBinariesDir) == 0 {
+		return "", errors.Errorf("could not find %q because there are no helper binary directories configured", name)
+	}
+	return "", errors.Errorf("could not find %q in one of %v", name, c.Engine.HelperBinariesDir)
 }

@@ -31,8 +31,8 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/syndtr/gocapability/capability"
-	"golang.org/x/crypto/ssh/terminal"
 	"golang.org/x/sys/unix"
+	"golang.org/x/term"
 )
 
 const (
@@ -138,13 +138,13 @@ func RunUsingChroot(spec *specs.Spec, bundlePath, homeDir string, stdin io.Reade
 
 	// Set our terminal's mode to raw, to pass handling of special
 	// terminal input to the terminal in the container.
-	if spec.Process.Terminal && terminal.IsTerminal(unix.Stdin) {
-		state, err := terminal.MakeRaw(unix.Stdin)
+	if spec.Process.Terminal && term.IsTerminal(unix.Stdin) {
+		state, err := term.MakeRaw(unix.Stdin)
 		if err != nil {
 			logrus.Warnf("error setting terminal state: %v", err)
 		} else {
 			defer func() {
-				if err = terminal.Restore(unix.Stdin, state); err != nil {
+				if err = term.Restore(unix.Stdin, state); err != nil {
 					logrus.Errorf("unable to restore terminal state: %v", err)
 				}
 			}()
@@ -161,7 +161,7 @@ func RunUsingChroot(spec *specs.Spec, bundlePath, homeDir string, stdin io.Reade
 	cmd := unshare.Command(runUsingChrootCommand)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 	cmd.Dir = "/"
-	cmd.Env = append([]string{fmt.Sprintf("LOGLEVEL=%d", logrus.GetLevel())}, os.Environ()...)
+	cmd.Env = []string{fmt.Sprintf("LOGLEVEL=%d", logrus.GetLevel())}
 
 	logrus.Debugf("Running %#v in %#v", cmd.Cmd, cmd)
 	confwg.Add(1)
@@ -207,7 +207,7 @@ func runUsingChrootMain() {
 		os.Exit(1)
 	}
 
-	if options.Spec == nil {
+	if options.Spec == nil || options.Spec.Process == nil {
 		fmt.Fprintf(os.Stderr, "invalid options spec in runUsingChrootMain\n")
 		os.Exit(1)
 	}
@@ -275,7 +275,7 @@ func runUsingChrootMain() {
 			winsize.Row = uint16(options.Spec.Process.ConsoleSize.Height)
 			winsize.Col = uint16(options.Spec.Process.ConsoleSize.Width)
 		} else {
-			if terminal.IsTerminal(unix.Stdin) {
+			if term.IsTerminal(unix.Stdin) {
 				// Use the size of our terminal.
 				winsize, err = unix.IoctlGetWinsize(unix.Stdin, unix.TIOCGWINSZ)
 				if err != nil {
@@ -573,7 +573,7 @@ func runUsingChroot(spec *specs.Spec, bundlePath string, ctty *os.File, stdin io
 	cmd := unshare.Command(append([]string{runUsingChrootExecCommand}, spec.Process.Args...)...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 	cmd.Dir = "/"
-	cmd.Env = append([]string{fmt.Sprintf("LOGLEVEL=%d", logrus.GetLevel())}, os.Environ()...)
+	cmd.Env = []string{fmt.Sprintf("LOGLEVEL=%d", logrus.GetLevel())}
 	cmd.UnshareFlags = syscall.CLONE_NEWUTS | syscall.CLONE_NEWNS
 	requestedUserNS := false
 	for _, ns := range spec.Linux.Namespaces {
@@ -663,7 +663,7 @@ func runUsingChrootExecMain() {
 	// Set the hostname.  We're already in a distinct UTS namespace and are admins in the user
 	// namespace which created it, so we shouldn't get a permissions error, but seccomp policy
 	// might deny our attempt to call sethostname() anyway, so log a debug message for that.
-	if options.Spec == nil {
+	if options.Spec == nil || options.Spec.Process == nil {
 		fmt.Fprintf(os.Stderr, "invalid options spec passed in\n")
 		os.Exit(1)
 	}
@@ -819,7 +819,6 @@ func runUsingChrootExecMain() {
 // Output debug messages when that differs from what we're being asked to do.
 func logNamespaceDiagnostics(spec *specs.Spec) {
 	sawMountNS := false
-	sawUserNS := false
 	sawUTSNS := false
 	for _, ns := range spec.Linux.Namespaces {
 		switch ns.Type {
@@ -854,9 +853,8 @@ func logNamespaceDiagnostics(spec *specs.Spec) {
 			}
 		case specs.UserNamespace:
 			if ns.Path != "" {
-				logrus.Debugf("unable to join user namespace %q, creating a new one", ns.Path)
+				logrus.Debugf("unable to join user namespace, sorry about that")
 			}
-			sawUserNS = true
 		case specs.UTSNamespace:
 			if ns.Path != "" {
 				logrus.Debugf("unable to join UTS namespace %q, creating a new one", ns.Path)
@@ -866,9 +864,6 @@ func logNamespaceDiagnostics(spec *specs.Spec) {
 	}
 	if !sawMountNS {
 		logrus.Debugf("mount namespace not requested, but creating a new one anyway")
-	}
-	if !sawUserNS {
-		logrus.Debugf("user namespace not requested, but creating a new one anyway")
 	}
 	if !sawUTSNS {
 		logrus.Debugf("UTS namespace not requested, but creating a new one anyway")

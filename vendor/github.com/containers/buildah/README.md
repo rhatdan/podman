@@ -1,4 +1,4 @@
-![buildah logo](https://cdn.rawgit.com/containers/buildah/master/logos/buildah-logo_large.png)
+![buildah logo](https://cdn.rawgit.com/containers/buildah/main/logos/buildah-logo_large.png)
 
 # [Buildah](https://www.youtube.com/embed/YVk5NgSiUw8) - a tool that facilitates building [Open Container Initiative (OCI)](https://www.opencontainers.org/) container images
 
@@ -69,7 +69,7 @@ storage differences, you can not see Podman containers from within Buildah or vi
 In short, Buildah is an efficient way to create OCI images while Podman allows
 you to manage and maintain those images and containers in a production environment using
 familiar container cli commands.  For more details, see the
-[Container Tools Guide](https://github.com/containers/buildah/tree/master/docs/containertools).
+[Container Tools Guide](https://github.com/containers/buildah/tree/main/docs/containertools).
 
 ## Example
 
@@ -104,7 +104,7 @@ $ sudo ./lighttpd.sh
 | Command                                              | Description                                                                                          |
 | ---------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | [buildah-add(1)](/docs/buildah-add.md)               | Add the contents of a file, URL, or a directory to the container.                                    |
-| [buildah-bud(1)](/docs/buildah-bud.md)               | Build an image using instructions from Dockerfiles.                                                  |
+| [buildah-build(1)](/docs/buildah-build.md)           | Build an image using instructions from Containerfiles or Dockerfiles.                                |
 | [buildah-commit(1)](/docs/buildah-commit.md)         | Create an image from a working container.                                                            |
 | [buildah-config(1)](/docs/buildah-config.md)         | Update image configuration settings.                                                                 |
 | [buildah-containers(1)](/docs/buildah-containers.md) | List the working containers and their base images.                                                   |

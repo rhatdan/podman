@@ -15,6 +15,8 @@ import (
 	"unicode"
 
 	"github.com/containers/buildah/define"
+	"github.com/containers/buildah/pkg/sshagent"
+	"github.com/containers/common/pkg/parse"
 	"github.com/containers/image/v5/types"
 	"github.com/containers/storage/pkg/idtools"
 	"github.com/containers/storage/pkg/unshare"
@@ -23,7 +25,7 @@ import (
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
-	"golang.org/x/crypto/ssh/terminal"
+	"golang.org/x/term"
 )
 
 const (
@@ -126,6 +128,7 @@ func CommonBuildOptions(c *cobra.Command) (*define.CommonBuildOptions, error) {
 	}
 
 	secrets, _ := c.Flags().GetStringArray("secret")
+	sshsources, _ := c.Flags().GetStringArray("ssh")
 
 	commonOpts := &define.CommonBuildOptions{
 		AddHost:      addHost,
@@ -145,6 +148,7 @@ func CommonBuildOptions(c *cobra.Command) (*define.CommonBuildOptions, error) {
 		Ulimit:       ulimit,
 		Volumes:      volumes,
 		Secrets:      secrets,
+		SSHSources:   sshsources,
 	}
 	securityOpts, _ := c.Flags().GetStringArray("security-opt")
 	if err := parseSecurityOpts(securityOpts, commonOpts); err != nil {
@@ -205,13 +209,13 @@ func Volume(volume string) (specs.Mount, error) {
 	if err := validateVolumeMountHostDir(arr[0]); err != nil {
 		return mount, err
 	}
-	if err := ValidateVolumeCtrDir(arr[1]); err != nil {
+	if err := parse.ValidateVolumeCtrDir(arr[1]); err != nil {
 		return mount, err
 	}
 	mountOptions := ""
 	if len(arr) > 2 {
 		mountOptions = arr[2]
-		if _, err := ValidateVolumeOpts(strings.Split(arr[2], ",")); err != nil {
+		if _, err := parse.ValidateVolumeOpts(strings.Split(arr[2], ",")); err != nil {
 			return mount, err
 		}
 	}
@@ -360,7 +364,7 @@ func GetBindMount(args []string) (specs.Mount, error) {
 			if len(kv) == 1 {
 				return newMount, errors.Wrapf(optionArgError, kv[0])
 			}
-			if err := ValidateVolumeHostDir(kv[1]); err != nil {
+			if err := parse.ValidateVolumeHostDir(kv[1]); err != nil {
 				return newMount, err
 			}
 			newMount.Source = kv[1]
@@ -369,7 +373,7 @@ func GetBindMount(args []string) (specs.Mount, error) {
 			if len(kv) == 1 {
 				return newMount, errors.Wrapf(optionArgError, kv[0])
 			}
-			if err := ValidateVolumeCtrDir(kv[1]); err != nil {
+			if err := parse.ValidateVolumeCtrDir(kv[1]); err != nil {
 				return newMount, err
 			}
 			newMount.Destination = kv[1]
@@ -391,7 +395,7 @@ func GetBindMount(args []string) (specs.Mount, error) {
 		newMount.Source = newMount.Destination
 	}
 
-	opts, err := ValidateVolumeOpts(newMount.Options)
+	opts, err := parse.ValidateVolumeOpts(newMount.Options)
 	if err != nil {
 		return newMount, err
 	}
@@ -433,7 +437,7 @@ func GetTmpfsMount(args []string) (specs.Mount, error) {
 			if len(kv) == 1 {
 				return newMount, errors.Wrapf(optionArgError, kv[0])
 			}
-			if err := ValidateVolumeCtrDir(kv[1]); err != nil {
+			if err := parse.ValidateVolumeCtrDir(kv[1]); err != nil {
 				return newMount, err
 			}
 			newMount.Destination = kv[1]
@@ -452,17 +456,7 @@ func GetTmpfsMount(args []string) (specs.Mount, error) {
 
 // ValidateVolumeHostDir validates a volume mount's source directory
 func ValidateVolumeHostDir(hostDir string) error {
-	if len(hostDir) == 0 {
-		return errors.Errorf("host directory cannot be empty")
-	}
-	if filepath.IsAbs(hostDir) {
-		if _, err := os.Stat(hostDir); err != nil {
-			return errors.WithStack(err)
-		}
-	}
-	// If hostDir is not an absolute path, that means the user wants to create a
-	// named volume. This will be done later on in the code.
-	return nil
+	return parse.ValidateVolumeHostDir(hostDir)
 }
 
 // validates the host path of buildah --volume
@@ -478,75 +472,12 @@ func validateVolumeMountHostDir(hostDir string) error {
 
 // ValidateVolumeCtrDir validates a volume mount's destination directory.
 func ValidateVolumeCtrDir(ctrDir string) error {
-	if len(ctrDir) == 0 {
-		return errors.Errorf("container directory cannot be empty")
-	}
-	if !filepath.IsAbs(ctrDir) {
-		return errors.Errorf("invalid container path %q, must be an absolute path", ctrDir)
-	}
-	return nil
+	return parse.ValidateVolumeCtrDir(ctrDir)
 }
 
 // ValidateVolumeOpts validates a volume's options
 func ValidateVolumeOpts(options []string) ([]string, error) {
-	var foundRootPropagation, foundRWRO, foundLabelChange, bindType, foundExec, foundDev, foundSuid, foundChown int
-	finalOpts := make([]string, 0, len(options))
-	for _, opt := range options {
-		switch opt {
-		case "noexec", "exec":
-			foundExec++
-			if foundExec > 1 {
-				return nil, errors.Errorf("invalid options %q, can only specify 1 'noexec' or 'exec' option", strings.Join(options, ", "))
-			}
-		case "nodev", "dev":
-			foundDev++
-			if foundDev > 1 {
-				return nil, errors.Errorf("invalid options %q, can only specify 1 'nodev' or 'dev' option", strings.Join(options, ", "))
-			}
-		case "nosuid", "suid":
-			foundSuid++
-			if foundSuid > 1 {
-				return nil, errors.Errorf("invalid options %q, can only specify 1 'nosuid' or 'suid' option", strings.Join(options, ", "))
-			}
-		case "rw", "ro":
-			foundRWRO++
-			if foundRWRO > 1 {
-				return nil, errors.Errorf("invalid options %q, can only specify 1 'rw' or 'ro' option", strings.Join(options, ", "))
-			}
-		case "z", "Z", "O":
-			foundLabelChange++
-			if foundLabelChange > 1 {
-				return nil, errors.Errorf("invalid options %q, can only specify 1 'z', 'Z', or 'O' option", strings.Join(options, ", "))
-			}
-		case "U":
-			foundChown++
-			if foundChown > 1 {
-				return nil, errors.Errorf("invalid options %q, can only specify 1 'U' option", strings.Join(options, ", "))
-			}
-		case "private", "rprivate", "shared", "rshared", "slave", "rslave", "unbindable", "runbindable":
-			foundRootPropagation++
-			if foundRootPropagation > 1 {
-				return nil, errors.Errorf("invalid options %q, can only specify 1 '[r]shared', '[r]private', '[r]slave' or '[r]unbindable' option", strings.Join(options, ", "))
-			}
-		case "bind", "rbind":
-			bindType++
-			if bindType > 1 {
-				return nil, errors.Errorf("invalid options %q, can only specify 1 '[r]bind' option", strings.Join(options, ", "))
-			}
-		case "cached", "delegated":
-			// The discarded ops are OS X specific volume options
-			// introduced in a recent Docker version.
-			// They have no meaning on Linux, so here we silently
-			// drop them. This matches Docker's behavior (the options
-			// are intended to be always safe to use, even not on OS
-			// X).
-			continue
-		default:
-			return nil, errors.Errorf("invalid option type %q", opt)
-		}
-		finalOpts = append(finalOpts, opt)
-	}
-	return finalOpts, nil
+	return parse.ValidateVolumeOpts(options)
 }
 
 // validateExtraHost validates that the specified string is a valid extrahost and returns it.
@@ -601,7 +532,7 @@ func SystemContextFromOptions(c *cobra.Command) (*types.SystemContext, error) {
 	creds, err := c.Flags().GetString("creds")
 	if err == nil && c.Flag("creds").Changed {
 		var err error
-		ctx.DockerAuthConfig, err = getDockerAuth(creds)
+		ctx.DockerAuthConfig, err = AuthConfig(creds)
 		if err != nil {
 			return nil, err
 		}
@@ -622,37 +553,51 @@ func SystemContextFromOptions(c *cobra.Command) (*types.SystemContext, error) {
 	if err == nil && c.Flag("registries-conf-dir").Changed {
 		ctx.RegistriesDirPath = regConfDir
 	}
+	shortNameAliasConf, err := c.Flags().GetString("short-name-alias-conf")
+	if err == nil && c.Flag("short-name-alias-conf").Changed {
+		ctx.UserShortNameAliasConfPath = shortNameAliasConf
+	}
 	ctx.DockerRegistryUserAgent = fmt.Sprintf("Buildah/%s", define.Version)
 	if c.Flag("os") != nil && c.Flag("os").Changed {
-		if os, err := c.Flags().GetString("os"); err == nil {
-			ctx.OSChoice = os
+		var os string
+		if os, err = c.Flags().GetString("os"); err != nil {
+			return nil, err
 		}
+		ctx.OSChoice = os
 	}
 	if c.Flag("arch") != nil && c.Flag("arch").Changed {
-		if arch, err := c.Flags().GetString("arch"); err == nil {
-			ctx.ArchitectureChoice = arch
+		var arch string
+		if arch, err = c.Flags().GetString("arch"); err != nil {
+			return nil, err
 		}
+		ctx.ArchitectureChoice = arch
 	}
 	if c.Flag("variant") != nil && c.Flag("variant").Changed {
-		if variant, err := c.Flags().GetString("variant"); err == nil {
-			ctx.VariantChoice = variant
+		var variant string
+		if variant, err = c.Flags().GetString("variant"); err != nil {
+			return nil, err
 		}
+		ctx.VariantChoice = variant
 	}
 	if c.Flag("platform") != nil && c.Flag("platform").Changed {
-		if platform, err := c.Flags().GetString("platform"); err == nil {
-			os, arch, variant, err := Platform(platform)
-			if err != nil {
-				return nil, err
-			}
-			if ctx.OSChoice != "" ||
-				ctx.ArchitectureChoice != "" ||
-				ctx.VariantChoice != "" {
-				return nil, errors.Errorf("invalid --platform may not be used with --os, --arch, or --variant")
-			}
-			ctx.OSChoice = os
-			ctx.ArchitectureChoice = arch
-			ctx.VariantChoice = variant
+		var specs []string
+		if specs, err = c.Flags().GetStringSlice("platform"); err != nil {
+			return nil, err
 		}
+		if len(specs) == 0 || specs[0] == "" {
+			return nil, errors.Errorf("unable to parse --platform value %v", specs)
+		}
+		platform := specs[0]
+		os, arch, variant, err := Platform(platform)
+		if err != nil {
+			return nil, err
+		}
+		if ctx.OSChoice != "" || ctx.ArchitectureChoice != "" || ctx.VariantChoice != "" {
+			return nil, errors.Errorf("invalid --platform may not be used with --os, --arch, or --variant")
+		}
+		ctx.OSChoice = os
+		ctx.ArchitectureChoice = arch
+		ctx.VariantChoice = variant
 	}
 
 	ctx.BigFilesTemporaryDir = GetTempDir()
@@ -667,32 +612,57 @@ func getAuthFile(authfile string) string {
 }
 
 // PlatformFromOptions parses the operating system (os) and architecture (arch)
-// from the provided command line options.
+// from the provided command line options.  Deprecated in favor of
+// PlatformsFromOptions(), but kept here because it's part of our API.
 func PlatformFromOptions(c *cobra.Command) (os, arch string, err error) {
+	platforms, err := PlatformsFromOptions(c)
+	if err != nil {
+		return "", "", err
+	}
+	if len(platforms) < 1 {
+		return "", "", errors.Errorf("invalid platform syntax for --platform (use OS/ARCH[/VARIANT])")
+	}
+	return platforms[0].OS, platforms[0].Arch, nil
+}
 
+// PlatformsFromOptions parses the operating system (os) and architecture
+// (arch) from the provided command line options.  If --platform used, it
+// also returns the list of platforms that were passed in as its argument.
+func PlatformsFromOptions(c *cobra.Command) (platforms []struct{ OS, Arch, Variant string }, err error) {
+	var os, arch, variant string
 	if c.Flag("os").Changed {
-		if selectedOS, err := c.Flags().GetString("os"); err == nil {
-			os = selectedOS
+		if os, err = c.Flags().GetString("os"); err != nil {
+			return nil, err
 		}
 	}
 	if c.Flag("arch").Changed {
-		if selectedArch, err := c.Flags().GetString("arch"); err == nil {
-			arch = selectedArch
+		if arch, err = c.Flags().GetString("arch"); err != nil {
+			return nil, err
 		}
 	}
-
+	if c.Flag("variant").Changed {
+		if variant, err = c.Flags().GetString("variant"); err != nil {
+			return nil, err
+		}
+	}
+	platforms = []struct{ OS, Arch, Variant string }{{os, arch, variant}}
 	if c.Flag("platform").Changed {
-		if pf, err := c.Flags().GetString("platform"); err == nil {
-			selectedOS, selectedArch, _, err := Platform(pf)
-			if err != nil {
-				return "", "", errors.Wrap(err, "unable to parse platform")
+		platforms = nil
+		platformSpecs, err := c.Flags().GetStringSlice("platform")
+		if err != nil {
+			return nil, errors.Wrap(err, "unable to parse platform")
+		}
+		if os != "" || arch != "" || variant != "" {
+			return nil, errors.Errorf("invalid --platform may not be used with --os, --arch, or --variant")
+		}
+		for _, pf := range platformSpecs {
+			if os, arch, variant, err = Platform(pf); err != nil {
+				return nil, errors.Wrapf(err, "unable to parse platform %q", pf)
 			}
-			arch = selectedArch
-			os = selectedOS
+			platforms = append(platforms, struct{ OS, Arch, Variant string }{os, arch, variant})
 		}
 	}
-
-	return os, arch, nil
+	return platforms, nil
 }
 
 const platformSep = "/"
@@ -702,18 +672,24 @@ func DefaultPlatform() string {
 	return runtime.GOOS + platformSep + runtime.GOARCH
 }
 
-// Platform separates the platform string into os, arch and variant
+// Platform separates the platform string into os, arch and variant,
+// accepting any of $arch, $os/$arch, or $os/$arch/$variant.
 func Platform(platform string) (os, arch, variant string, err error) {
 	split := strings.Split(platform, platformSep)
-	if len(split) < 2 {
-		return "", "", "", errors.Errorf("invalid platform syntax for %q (use OS/ARCH)", platform)
-	}
-	os = split[0]
-	arch = split[1]
-	if len(split) == 3 {
+	switch len(split) {
+	case 3:
 		variant = split[2]
+		fallthrough
+	case 2:
+		arch = split[1]
+		os = split[0]
+		return
+	case 1:
+		if platform == "local" {
+			return Platform(DefaultPlatform())
+		}
 	}
-	return
+	return "", "", "", errors.Errorf("invalid platform syntax for %q (use OS/ARCH[/VARIANT][,...])", platform)
 }
 
 func parseCreds(creds string) (string, string) {
@@ -730,7 +706,9 @@ func parseCreds(creds string) (string, string) {
 	return up[0], up[1]
 }
 
-func getDockerAuth(creds string) (*types.DockerAuthConfig, error) {
+// AuthConfig parses the creds in format [username[:password] into an auth
+// config.
+func AuthConfig(creds string) (*types.DockerAuthConfig, error) {
 	username, password := parseCreds(creds)
 	if username == "" {
 		fmt.Print("Username: ")
@@ -738,7 +716,7 @@ func getDockerAuth(creds string) (*types.DockerAuthConfig, error) {
 	}
 	if password == "" {
 		fmt.Print("Password: ")
-		termPassword, err := terminal.ReadPassword(0)
+		termPassword, err := term.ReadPassword(0)
 		if err != nil {
 			return nil, errors.Wrapf(err, "could not read password from terminal")
 		}
@@ -1085,6 +1063,25 @@ func Secrets(secrets []string) (map[string]string, error) {
 		} else {
 			return nil, invalidSyntax
 		}
+	}
+	return parsed, nil
+}
+
+// SSH parses the --ssh flag
+func SSH(sshSources []string) (map[string]*sshagent.Source, error) {
+	parsed := make(map[string]*sshagent.Source)
+	var paths []string
+	for _, v := range sshSources {
+		parts := strings.SplitN(v, "=", 2)
+		if len(parts) > 1 {
+			paths = strings.Split(parts[1], ",")
+		}
+
+		source, err := sshagent.NewSource(paths)
+		if err != nil {
+			return nil, err
+		}
+		parsed[parts[0]] = source
 	}
 	return parsed, nil
 }

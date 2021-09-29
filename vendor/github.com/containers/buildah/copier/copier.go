@@ -1211,13 +1211,42 @@ func copierHandlerGet(bulkWriter io.Writer, req request, pm *fileutils.PatternMa
 						// skip the "." entry
 						return nil
 					}
-					_, skip, err := pathIsExcluded(req.Root, path, pm)
+					skippedPath, skip, err := pathIsExcluded(req.Root, path, pm)
 					if err != nil {
 						return err
 					}
 					if skip {
-						// don't use filepath.SkipDir
-						// here, since a more specific
+						if info.IsDir() {
+							// if there are no "include
+							// this anyway" patterns at
+							// all, we don't need to
+							// descend into this particular
+							// directory if it's a directory
+							if !pm.Exclusions() {
+								return filepath.SkipDir
+							}
+							// if there are exclusion
+							// patterns for which this
+							// path is a prefix, we
+							// need to keep descending
+							for _, pattern := range pm.Patterns() {
+								if !pattern.Exclusion() {
+									continue
+								}
+								spec := strings.Trim(pattern.String(), string(os.PathSeparator))
+								trimmedPath := strings.Trim(skippedPath, string(os.PathSeparator))
+								if strings.HasPrefix(spec+string(os.PathSeparator), trimmedPath) {
+									// we can't just skip over
+									// this directory
+									return nil
+								}
+							}
+							// there are exclusions, but
+							// none of them apply here
+							return filepath.SkipDir
+						}
+						// skip this item, but if we're
+						// a directory, a more specific
 						// but-include-this for
 						// something under it might
 						// also be in the excludes list
@@ -1745,14 +1774,6 @@ func copierHandlerPut(bulkReader io.Reader, req request, idMappings *idtools.IDM
 			if err != nil {
 				return errors.Wrapf(err, "copier: put: error creating %q", path)
 			}
-			// restore xattrs
-			if !req.PutOptions.StripXattrs {
-				if err = Lsetxattrs(path, hdr.Xattrs); err != nil { // nolint:staticcheck
-					if !req.PutOptions.IgnoreXattrErrors {
-						return errors.Wrapf(err, "copier: put: error setting extended attributes on %q", path)
-					}
-				}
-			}
 			// set ownership
 			if err = lchown(path, hdr.Uid, hdr.Gid); err != nil {
 				return errors.Wrapf(err, "copier: put: error setting ownership of %q to %d:%d", path, hdr.Uid, hdr.Gid)
@@ -1776,6 +1797,14 @@ func copierHandlerPut(bulkReader io.Reader, req request, idMappings *idtools.IDM
 				}
 				if err = syscall.Chmod(path, uint32(mode)); err != nil {
 					return errors.Wrapf(err, "error setting additional permissions on %q to 0%o", path, mode)
+				}
+			}
+			// set xattrs, including some that might have been reset by chown()
+			if !req.PutOptions.StripXattrs {
+				if err = Lsetxattrs(path, hdr.Xattrs); err != nil { // nolint:staticcheck
+					if !req.PutOptions.IgnoreXattrErrors {
+						return errors.Wrapf(err, "copier: put: error setting extended attributes on %q", path)
+					}
 				}
 			}
 			// set time

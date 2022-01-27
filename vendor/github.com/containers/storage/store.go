@@ -647,17 +647,21 @@ func GetStore(options types.StoreOptions) (Store, error) {
 	storesLock.Lock()
 	defer storesLock.Unlock()
 
+	// return if BOTH run and graph root are matched, otherwise our run-root can be overridden if the graph is found first
 	for _, s := range stores {
-		if s.graphRoot == options.GraphRoot && (options.GraphDriverName == "" || s.graphDriverName == options.GraphDriverName) {
+		if (s.graphRoot == options.GraphRoot) && (s.runRoot == options.RunRoot) && (options.GraphDriverName == "" || s.graphDriverName == options.GraphDriverName) {
 			return s, nil
 		}
 	}
 
-	if options.GraphRoot == "" {
-		return nil, errors.Wrap(ErrIncompleteOptions, "no storage root specified")
-	}
-	if options.RunRoot == "" {
-		return nil, errors.Wrap(ErrIncompleteOptions, "no storage runroot specified")
+	// if passed a run-root or graph-root alone, the other should be defaulted only error if we have neither.
+	switch {
+	case options.RunRoot == "" && options.GraphRoot == "":
+		return nil, errors.Wrap(ErrIncompleteOptions, "no storage runroot or graphroot specified")
+	case options.GraphRoot == "":
+		options.GraphRoot = types.Options().GraphRoot
+	case options.RunRoot == "":
+		options.RunRoot = types.Options().RunRoot
 	}
 
 	if err := os.MkdirAll(options.RunRoot, 0700); err != nil {
@@ -1609,7 +1613,7 @@ func (s *store) ImageBigData(id, key string) ([]byte, error) {
 		}
 	}
 	if foundImage {
-		return nil, errors.Wrapf(os.ErrNotExist, "error locating item named %q for image with ID %q", key, id)
+		return nil, errors.Wrapf(os.ErrNotExist, "error locating item named %q for image with ID %q (consider removing the image to resolve the issue)", key, id)
 	}
 	return nil, errors.Wrapf(ErrImageUnknown, "error locating image with ID %q", id)
 }
@@ -2497,23 +2501,29 @@ func (s *store) DeleteContainer(id string) error {
 			gcpath := filepath.Join(s.GraphRoot(), middleDir, container.ID)
 			wg.Add(1)
 			go func() {
-				var err error
-				for attempts := 0; attempts < 50; attempts++ {
-					err = os.RemoveAll(gcpath)
-					if err == nil || !system.IsEBUSY(err) {
-						break
-					}
-					time.Sleep(time.Millisecond * 100)
+				defer wg.Done()
+				// attempt a simple rm -rf first
+				err := os.RemoveAll(gcpath)
+				if err == nil {
+					errChan <- nil
+					return
 				}
-				errChan <- err
-				wg.Done()
+				// and if it fails get to the more complicated cleanup
+				errChan <- system.EnsureRemoveAll(gcpath)
 			}()
 
 			rcpath := filepath.Join(s.RunRoot(), middleDir, container.ID)
 			wg.Add(1)
 			go func() {
-				errChan <- os.RemoveAll(rcpath)
-				wg.Done()
+				defer wg.Done()
+				// attempt a simple rm -rf first
+				err := os.RemoveAll(rcpath)
+				if err == nil {
+					errChan <- nil
+					return
+				}
+				// and if it fails get to the more complicated cleanup
+				errChan <- system.EnsureRemoveAll(rcpath)
 			}()
 
 			go func() {

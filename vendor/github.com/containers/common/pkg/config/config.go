@@ -48,6 +48,18 @@ const (
 	BoltDBStateStore RuntimeStateStore = iota
 )
 
+// ProxyEnv is a list of Proxy Environment variables
+var ProxyEnv = []string{
+	"http_proxy",
+	"https_proxy",
+	"ftp_proxy",
+	"no_proxy",
+	"HTTP_PROXY",
+	"HTTPS_PROXY",
+	"FTP_PROXY",
+	"NO_PROXY",
+}
+
 // Config contains configuration options for container tools
 type Config struct {
 	// Containers specify settings that configure how containers will run ont the system
@@ -60,6 +72,8 @@ type Config struct {
 	Network NetworkConfig `toml:"network"`
 	// Secret section defines configurations for the secret management
 	Secrets SecretConfig `toml:"secrets"`
+	// ConfigMap section defines configurations for the configmaps management
+	ConfigMaps ConfigMapConfig `toml:"configmaps"`
 }
 
 // ContainersConfig represents the "containers" TOML config table
@@ -166,11 +180,6 @@ type ContainersConfig struct {
 	// the container is started. Setting it to true may have negative
 	// performance implications.
 	PrepareVolumeOnCreate bool `toml:"prepare_volume_on_create,omitempty"`
-
-	// RootlessNetworking depicts the "kind" of networking for rootless
-	// containers.  Valid options are `slirp4netns` and `cni`. Default is
-	// `slirp4netns` on Linux, and `cni` on non-Linux OSes.
-	RootlessNetworking string `toml:"rootless_networking,omitempty"`
 
 	// SeccompProfile is the seccomp.json profile path which is used as the
 	// default for the runtime.
@@ -502,6 +511,17 @@ type SecretConfig struct {
 	Opts map[string]string `toml:"opts,omitempty"`
 }
 
+// ConfigMapConfig represents the "configmap" TOML config table
+type ConfigMapConfig struct {
+	// Driver specifies the configmap driver to use.
+	// Current valid value:
+	//  * file
+	//  * pass
+	Driver string `toml:"driver,omitempty"`
+	// Opts contains driver specific options
+	Opts map[string]string `toml:"opts,omitempty"`
+}
+
 // MachineConfig represents the "machine" TOML config table
 type MachineConfig struct {
 	// Number of CPU's a machine is created with.
@@ -810,21 +830,6 @@ func (c *ContainersConfig) Validate() error {
 // execution checks. It returns an `error` on validation failure, otherwise
 // `nil`.
 func (c *NetworkConfig) Validate() error {
-	expectedConfigDir := _cniConfigDir
-	if unshare.IsRootless() {
-		home, err := unshare.HomeDir()
-		if err != nil {
-			return err
-		}
-		expectedConfigDir = filepath.Join(home, _cniConfigDirRootless)
-	}
-	if c.NetworkConfigDir != expectedConfigDir {
-		err := isDirectory(c.NetworkConfigDir)
-		if err != nil && !os.IsNotExist(err) {
-			return errors.Wrapf(err, "invalid network_config_dir: %s", c.NetworkConfigDir)
-		}
-	}
-
 	if stringsEq(c.CNIPluginDirs, DefaultCNIPluginDirs) {
 		return nil
 	}
@@ -897,8 +902,7 @@ func (c *Config) GetDefaultEnvEx(envHost, httpProxy bool) []string {
 	if envHost {
 		env = append(env, os.Environ()...)
 	} else if httpProxy {
-		proxy := []string{"http_proxy", "https_proxy", "ftp_proxy", "no_proxy", "HTTP_PROXY", "HTTPS_PROXY", "FTP_PROXY", "NO_PROXY"}
-		for _, p := range proxy {
+		for _, p := range ProxyEnv {
 			if val, ok := os.LookupEnv(p); ok {
 				env = append(env, fmt.Sprintf("%s=%s", p, val))
 			}
@@ -1184,7 +1188,7 @@ func (c *Config) FindHelperBinary(name string, searchPATH bool) (string, error) 
 	return "", errors.Errorf("could not find %q in one of %v.  %s", name, c.Engine.HelperBinariesDir, configHint)
 }
 
-// ImageCopyTmpDir default directory to store tempory image files during copy
+// ImageCopyTmpDir default directory to store temporary image files during copy
 func (c *Config) ImageCopyTmpDir() (string, error) {
 	if path, found := os.LookupEnv("TMPDIR"); found {
 		return path, nil

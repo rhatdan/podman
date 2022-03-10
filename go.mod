@@ -10,7 +10,7 @@ require (
 	github.com/checkpoint-restore/go-criu/v5 v5.3.0
 	github.com/container-orchestrated-devices/container-device-interface v0.0.0-20210325223243-f99e8b6c10b9
 	github.com/containernetworking/cni v1.0.1
-	github.com/containernetworking/plugins v1.0.1
+	github.com/containernetworking/plugins v1.1.1
 	github.com/containers/buildah v1.23.1
 	github.com/containers/common v0.46.1-0.20211209220542-24f363480347
 	github.com/containers/conmon v2.0.20+incompatible

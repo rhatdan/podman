@@ -3,27 +3,25 @@ package types
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/BurntSushi/toml"
-	"github.com/containers/storage/drivers/overlay"
 	cfg "github.com/containers/storage/pkg/config"
 	"github.com/containers/storage/pkg/idtools"
 	"github.com/sirupsen/logrus"
 )
 
 // TOML-friendly explicit tables used for conversions.
-type tomlConfig struct {
+type TomlConfig struct {
 	Storage struct {
-		Driver              string            `toml:"driver"`
-		RunRoot             string            `toml:"runroot"`
-		GraphRoot           string            `toml:"graphroot"`
-		RootlessStoragePath string            `toml:"rootless_storage_path"`
-		Options             cfg.OptionsConfig `toml:"options"`
+		Driver              string            `toml:"driver,omitempty"`
+		RunRoot             string            `toml:"runroot,omitempty"`
+		GraphRoot           string            `toml:"graphroot,omitempty"`
+		RootlessStoragePath string            `toml:"rootless_storage_path,omitempty"`
+		Options             cfg.OptionsConfig `toml:"options,omitempty"`
 	} `toml:"storage"`
 }
 
@@ -225,25 +223,11 @@ func getRootlessStorageOpts(rootlessUID int, systemOpts StoreOptions) (StoreOpti
 		opts.GraphDriverName = overlayDriver
 	}
 
-	if opts.GraphDriverName == "" || opts.GraphDriverName == overlayDriver {
-		supported, err := overlay.SupportsNativeOverlay(opts.GraphRoot, rootlessRuntime)
-		if err != nil {
-			return opts, err
-		}
-		if supported {
-			opts.GraphDriverName = overlayDriver
-		} else {
-			if path, err := exec.LookPath("fuse-overlayfs"); err == nil {
-				opts.GraphDriverName = overlayDriver
-				opts.GraphDriverOptions = []string{fmt.Sprintf("overlay.mount_program=%s", path)}
-			}
-		}
-		if opts.GraphDriverName == overlayDriver {
-			for _, o := range systemOpts.GraphDriverOptions {
-				if strings.Contains(o, "ignore_chown_errors") {
-					opts.GraphDriverOptions = append(opts.GraphDriverOptions, o)
-					break
-				}
+	if opts.GraphDriverName == overlayDriver {
+		for _, o := range systemOpts.GraphDriverOptions {
+			if strings.Contains(o, "ignore_chown_errors") {
+				opts.GraphDriverOptions = append(opts.GraphDriverOptions, o)
+				break
 			}
 		}
 	}
@@ -306,7 +290,7 @@ func ReloadConfigurationFileIfNeeded(configFile string, storeOptions *StoreOptio
 // ReloadConfigurationFile parses the specified configuration file and overrides
 // the configuration in storeOptions.
 func ReloadConfigurationFile(configFile string, storeOptions *StoreOptions) {
-	config := new(tomlConfig)
+	config := new(TomlConfig)
 
 	meta, err := toml.DecodeFile(configFile, &config)
 	if err == nil {
@@ -321,7 +305,7 @@ func ReloadConfigurationFile(configFile string, storeOptions *StoreOptions) {
 		}
 	}
 
-	// Clear storeOptions of previos settings
+	// Clear storeOptions of previous settings
 	*storeOptions = StoreOptions{}
 	if config.Storage.Driver != "" {
 		storeOptions.GraphDriverName = config.Storage.Driver
@@ -423,4 +407,40 @@ func ReloadConfigurationFile(configFile string, storeOptions *StoreOptions) {
 
 func Options() StoreOptions {
 	return defaultStoreOptions
+}
+
+// Save overwrites the tomlConfig in storage.conf with the given conf
+func Save(conf TomlConfig, rootless bool) error {
+	configFile, err := DefaultConfigFile(rootless)
+	if err != nil {
+		return err
+	}
+
+	if err = os.Remove(configFile); !os.IsNotExist(err) && err != nil {
+		return err
+	}
+
+	f, err := os.Create(configFile)
+	if err != nil {
+		return err
+	}
+
+	return toml.NewEncoder(f).Encode(conf)
+}
+
+// StorageConfig is used to retrieve the storage.conf toml in order to overwrite it
+func StorageConfig(rootless bool) (*TomlConfig, error) {
+	config := new(TomlConfig)
+
+	configFile, err := DefaultConfigFile(rootless)
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = toml.DecodeFile(configFile, &config)
+	if err != nil {
+		return nil, err
+	}
+
+	return config, nil
 }

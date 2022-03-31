@@ -31,6 +31,14 @@ import (
 	"github.com/pkg/errors"
 )
 
+type updateNameOperation int
+
+const (
+	setNames updateNameOperation = iota
+	addNames
+	removeNames
+)
+
 var (
 	stores     []*store
 	storesLock sync.Mutex
@@ -368,7 +376,16 @@ type Store interface {
 
 	// SetNames changes the list of names for a layer, image, or container.
 	// Duplicate names are removed from the list automatically.
+	// Deprecated: Prone to race conditions, suggested alternatives are `AddNames` and `RemoveNames`.
 	SetNames(id string, names []string) error
+
+	// AddNames adds the list of names for a layer, image, or container.
+	// Duplicate names are removed from the list automatically.
+	AddNames(id string, names []string) error
+
+	// RemoveNames removes the list of names for a layer, image, or container.
+	// Duplicate names are removed from the list automatically.
+	RemoveNames(id string, names []string) error
 
 	// ListImageBigData retrieves a list of the (possibly large) chunks of
 	// named data associated with an image.
@@ -647,17 +664,21 @@ func GetStore(options types.StoreOptions) (Store, error) {
 	storesLock.Lock()
 	defer storesLock.Unlock()
 
+	// return if BOTH run and graph root are matched, otherwise our run-root can be overridden if the graph is found first
 	for _, s := range stores {
-		if s.graphRoot == options.GraphRoot && (options.GraphDriverName == "" || s.graphDriverName == options.GraphDriverName) {
+		if (s.graphRoot == options.GraphRoot) && (s.runRoot == options.RunRoot) && (options.GraphDriverName == "" || s.graphDriverName == options.GraphDriverName) {
 			return s, nil
 		}
 	}
 
-	if options.GraphRoot == "" {
-		return nil, errors.Wrap(ErrIncompleteOptions, "no storage root specified")
-	}
-	if options.RunRoot == "" {
-		return nil, errors.Wrap(ErrIncompleteOptions, "no storage runroot specified")
+	// if passed a run-root or graph-root alone, the other should be defaulted only error if we have neither.
+	switch {
+	case options.RunRoot == "" && options.GraphRoot == "":
+		return nil, errors.Wrap(ErrIncompleteOptions, "no storage runroot or graphroot specified")
+	case options.GraphRoot == "":
+		options.GraphRoot = types.Options().GraphRoot
+	case options.RunRoot == "":
+		options.RunRoot = types.Options().RunRoot
 	}
 
 	if err := os.MkdirAll(options.RunRoot, 0700); err != nil {
@@ -1609,7 +1630,7 @@ func (s *store) ImageBigData(id, key string) ([]byte, error) {
 		}
 	}
 	if foundImage {
-		return nil, errors.Wrapf(os.ErrNotExist, "error locating item named %q for image with ID %q", key, id)
+		return nil, errors.Wrapf(os.ErrNotExist, "error locating item named %q for image with ID %q (consider removing the image to resolve the issue)", key, id)
 	}
 	return nil, errors.Wrapf(ErrImageUnknown, "error locating image with ID %q", id)
 }
@@ -2046,7 +2067,20 @@ func dedupeNames(names []string) []string {
 	return deduped
 }
 
+// Deprecated: Prone to race conditions, suggested alternatives are `AddNames` and `RemoveNames`.
 func (s *store) SetNames(id string, names []string) error {
+	return s.updateNames(id, names, setNames)
+}
+
+func (s *store) AddNames(id string, names []string) error {
+	return s.updateNames(id, names, addNames)
+}
+
+func (s *store) RemoveNames(id string, names []string) error {
+	return s.updateNames(id, names, removeNames)
+}
+
+func (s *store) updateNames(id string, names []string, op updateNameOperation) error {
 	deduped := dedupeNames(names)
 
 	rlstore, err := s.LayerStore()
@@ -2059,7 +2093,16 @@ func (s *store) SetNames(id string, names []string) error {
 		return err
 	}
 	if rlstore.Exists(id) {
-		return rlstore.SetNames(id, deduped)
+		switch op {
+		case setNames:
+			return rlstore.SetNames(id, deduped)
+		case removeNames:
+			return rlstore.RemoveNames(id, deduped)
+		case addNames:
+			return rlstore.AddNames(id, deduped)
+		default:
+			return errInvalidUpdateNameOperation
+		}
 	}
 
 	ristore, err := s.ImageStore()
@@ -2072,7 +2115,16 @@ func (s *store) SetNames(id string, names []string) error {
 		return err
 	}
 	if ristore.Exists(id) {
-		return ristore.SetNames(id, deduped)
+		switch op {
+		case setNames:
+			return ristore.SetNames(id, deduped)
+		case removeNames:
+			return ristore.RemoveNames(id, deduped)
+		case addNames:
+			return ristore.AddNames(id, deduped)
+		default:
+			return errInvalidUpdateNameOperation
+		}
 	}
 
 	// Check is id refers to a RO Store
@@ -2110,7 +2162,16 @@ func (s *store) SetNames(id string, names []string) error {
 		return err
 	}
 	if rcstore.Exists(id) {
-		return rcstore.SetNames(id, deduped)
+		switch op {
+		case setNames:
+			return rcstore.SetNames(id, deduped)
+		case removeNames:
+			return rcstore.RemoveNames(id, deduped)
+		case addNames:
+			return rcstore.AddNames(id, deduped)
+		default:
+			return errInvalidUpdateNameOperation
+		}
 	}
 	return ErrLayerUnknown
 }
@@ -2497,23 +2558,29 @@ func (s *store) DeleteContainer(id string) error {
 			gcpath := filepath.Join(s.GraphRoot(), middleDir, container.ID)
 			wg.Add(1)
 			go func() {
-				var err error
-				for attempts := 0; attempts < 50; attempts++ {
-					err = os.RemoveAll(gcpath)
-					if err == nil || !system.IsEBUSY(err) {
-						break
-					}
-					time.Sleep(time.Millisecond * 100)
+				defer wg.Done()
+				// attempt a simple rm -rf first
+				err := os.RemoveAll(gcpath)
+				if err == nil {
+					errChan <- nil
+					return
 				}
-				errChan <- err
-				wg.Done()
+				// and if it fails get to the more complicated cleanup
+				errChan <- system.EnsureRemoveAll(gcpath)
 			}()
 
 			rcpath := filepath.Join(s.RunRoot(), middleDir, container.ID)
 			wg.Add(1)
 			go func() {
-				errChan <- os.RemoveAll(rcpath)
-				wg.Done()
+				defer wg.Done()
+				// attempt a simple rm -rf first
+				err := os.RemoveAll(rcpath)
+				if err == nil {
+					errChan <- nil
+					return
+				}
+				// and if it fails get to the more complicated cleanup
+				errChan <- system.EnsureRemoveAll(rcpath)
 			}()
 
 			go func() {
@@ -2522,17 +2589,12 @@ func (s *store) DeleteContainer(id string) error {
 			}()
 
 			var errors []error
-			for {
-				select {
-				case err, ok := <-errChan:
-					if !ok {
-						return multierror.Append(nil, errors...).ErrorOrNil()
-					}
-					if err != nil {
-						errors = append(errors, err)
-					}
+			for err := range errChan {
+				if err != nil {
+					errors = append(errors, err)
 				}
 			}
+			return multierror.Append(nil, errors...).ErrorOrNil()
 		}
 	}
 	return ErrNotAContainer

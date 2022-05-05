@@ -8,8 +8,7 @@ import (
 	spec "github.com/opencontainers/runtime-spec/specs-go"
 )
 
-type pidHandler struct {
-}
+type pidHandler struct{}
 
 func getPidsHandler() *pidHandler {
 	return &pidHandler{}
@@ -29,11 +28,14 @@ func (c *pidHandler) Apply(ctr *CgroupControl, res *spec.LinuxResources) error {
 	}
 
 	p := filepath.Join(PIDRoot, "pids.max")
-	return ioutil.WriteFile(p, []byte(fmt.Sprintf("%d\n", res.Pids.Limit)), 0644)
+	return ioutil.WriteFile(p, []byte(fmt.Sprintf("%d\n", res.Pids.Limit)), 0o644)
 }
 
 // Create the cgroup
 func (c *pidHandler) Create(ctr *CgroupControl) (bool, error) {
+	if ctr.cgroup2 {
+		return false, nil
+	}
 	return ctr.createCgroupDirectory(Pids)
 }
 

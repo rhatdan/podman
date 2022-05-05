@@ -4,7 +4,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +14,7 @@ import (
 	"github.com/containers/image/v5/pkg/sysregistriesv2"
 	"github.com/containers/image/v5/types"
 	"github.com/containers/storage/pkg/homedir"
+	"github.com/containers/storage/pkg/ioutils"
 	helperclient "github.com/docker/docker-credential-helpers/client"
 	"github.com/docker/docker-credential-helpers/credentials"
 	"github.com/hashicorp/go-multierror"
@@ -190,14 +190,12 @@ func GetAllCredentials(sys *types.SystemContext) (map[string]types.DockerAuthCon
 	for key := range allKeys {
 		authConf, err := GetCredentials(sys, key)
 		if err != nil {
-			if credentials.IsErrCredentialsNotFoundMessage(err.Error()) {
-				// Ignore if the credentials could not be found (anymore).
-				continue
-			}
 			// Note: we rely on the logging in `GetCredentials`.
 			return nil, err
 		}
-		authConfigs[key] = authConf
+		if authConf != (types.DockerAuthConfig{}) {
+			authConfigs[key] = authConf
+		}
 	}
 
 	return authConfigs, nil
@@ -285,7 +283,7 @@ func getCredentialsWithHomeDir(sys *types.SystemContext, key, homeDir string) (t
 				return types.DockerAuthConfig{}, "", err
 			}
 
-			if (authConfig.Username != "" && authConfig.Password != "") || authConfig.IdentityToken != "" {
+			if authConfig != (types.DockerAuthConfig{}) {
 				return authConfig, path.path, nil
 			}
 		}
@@ -545,7 +543,7 @@ func getPathToAuthWithOS(sys *types.SystemContext, goOS string) (string, bool, e
 func readJSONFile(path string, legacyFormat bool) (dockerConfigFile, error) {
 	var auths dockerConfigFile
 
-	raw, err := ioutil.ReadFile(path)
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			auths.AuthConfigs = map[string]dockerAuthConfig{}
@@ -607,7 +605,7 @@ func modifyJSON(sys *types.SystemContext, editor func(auths *dockerConfigFile) (
 			return "", errors.Wrapf(err, "marshaling JSON %q", path)
 		}
 
-		if err = ioutil.WriteFile(path, newData, 0600); err != nil {
+		if err = ioutils.AtomicWriteFile(path, newData, 0600); err != nil {
 			return "", errors.Wrapf(err, "writing to file %q", path)
 		}
 	}
@@ -669,6 +667,7 @@ func findCredentialsInFile(key, registry, path string, legacyFormat bool) (types
 	// This intentionally uses "registry", not "key"; we don't support namespaced
 	// credentials in helpers.
 	if ch, exists := auths.CredHelpers[registry]; exists {
+		logrus.Debugf("Looking up in credential helper %s based on credHelpers entry in %s", ch, path)
 		return getAuthFromCredHelper(ch, registry)
 	}
 
@@ -705,6 +704,9 @@ func findCredentialsInFile(key, registry, path string, legacyFormat bool) (types
 		}
 	}
 
+	// Only log this if we found nothing; getCredentialsWithHomeDir logs the
+	// source of found data.
+	logrus.Debugf("No credentials matching %s found in %s", key, path)
 	return types.DockerAuthConfig{}, nil
 }
 

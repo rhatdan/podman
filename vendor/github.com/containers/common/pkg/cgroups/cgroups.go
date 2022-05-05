@@ -265,7 +265,7 @@ func createCgroupv2Path(path string) (deferredError error) {
 	for i, e := range elements[3:] {
 		current = filepath.Join(current, e)
 		if i > 0 {
-			if err := os.Mkdir(current, 0755); err != nil {
+			if err := os.Mkdir(current, 0o755); err != nil {
 				if !os.IsExist(err) {
 					return err
 				}
@@ -281,7 +281,7 @@ func createCgroupv2Path(path string) (deferredError error) {
 		// We enable the controllers for all the path components except the last one.  It is not allowed to add
 		// PIDs if there are already enabled controllers.
 		if i < len(elements[3:])-1 {
-			if err := ioutil.WriteFile(filepath.Join(current, "cgroup.subtree_control"), res, 0755); err != nil {
+			if err := ioutil.WriteFile(filepath.Join(current, "cgroup.subtree_control"), res, 0o755); err != nil {
 				return err
 			}
 		}
@@ -323,7 +323,7 @@ func (c *CgroupControl) initialize() (err error) {
 				continue
 			}
 			path := c.getCgroupv1Path(ctr.name)
-			if err := os.MkdirAll(path, 0755); err != nil {
+			if err := os.MkdirAll(path, 0o755); err != nil {
 				return errors.Wrapf(err, "error creating cgroup path for %s", ctr.name)
 			}
 		}
@@ -343,7 +343,7 @@ func (c *CgroupControl) createCgroupDirectory(controller string) (bool, error) {
 		return false, err
 	}
 
-	if err := os.MkdirAll(cPath, 0755); err != nil {
+	if err := os.MkdirAll(cPath, 0o755); err != nil {
 		return false, errors.Wrapf(err, "error creating cgroup for %s", controller)
 	}
 	return true, nil
@@ -363,6 +363,29 @@ func readFileAsUint64(path string) (uint64, error) {
 		return ret, errors.Wrapf(err, "parse %s from %s", v, path)
 	}
 	return ret, nil
+}
+
+func readFileByKeyAsUint64(path, key string) (uint64, error) {
+	content, err := ioutil.ReadFile(path)
+	if err != nil {
+		return 0, err
+	}
+	for _, line := range strings.Split(string(content), "\n") {
+		fields := strings.SplitN(line, " ", 2)
+		if fields[0] == key {
+			v := cleanString(string(fields[1]))
+			if v == "max" {
+				return math.MaxUint64, nil
+			}
+			ret, err := strconv.ParseUint(v, 10, 64)
+			if err != nil {
+				return ret, errors.Wrapf(err, "parse %s from %s", v, path)
+			}
+			return ret, nil
+		}
+	}
+
+	return 0, fmt.Errorf("no key named %s from %s", key, path)
 }
 
 // New creates a new cgroup control
@@ -509,32 +532,6 @@ func (c *CgroupControl) Delete() error {
 	return c.DeleteByPath(c.path)
 }
 
-// rmDirRecursively delete recursively a cgroup directory.
-// It differs from os.RemoveAll as it doesn't attempt to unlink files.
-// On cgroupfs we are allowed only to rmdir empty directories.
-func rmDirRecursively(path string) error {
-	if err := os.Remove(path); err == nil || os.IsNotExist(err) {
-		return nil
-	}
-	entries, err := ioutil.ReadDir(path)
-	if err != nil {
-		return err
-	}
-	for _, i := range entries {
-		if i.IsDir() {
-			if err := rmDirRecursively(filepath.Join(path, i.Name())); err != nil {
-				return err
-			}
-		}
-	}
-	if err := os.Remove(path); err != nil {
-		if !os.IsNotExist(err) {
-			return errors.Wrapf(err, "remove %s", path)
-		}
-	}
-	return nil
-}
-
 // DeleteByPathConn deletes the specified cgroup path using the specified
 // dbus connection if needed.
 func (c *CgroupControl) DeleteByPathConn(path string, conn *systemdDbus.Conn) error {
@@ -592,7 +589,7 @@ func (c *CgroupControl) AddPid(pid int) error {
 
 	if c.cgroup2 {
 		p := filepath.Join(cgroupRoot, c.path, "cgroup.procs")
-		if err := ioutil.WriteFile(p, pidString, 0644); err != nil {
+		if err := ioutil.WriteFile(p, pidString, 0o644); err != nil {
 			return errors.Wrapf(err, "write %s", p)
 		}
 		return nil
@@ -615,7 +612,7 @@ func (c *CgroupControl) AddPid(pid int) error {
 			continue
 		}
 		p := filepath.Join(c.getCgroupv1Path(n), "tasks")
-		if err := ioutil.WriteFile(p, pidString, 0644); err != nil {
+		if err := ioutil.WriteFile(p, pidString, 0o644); err != nil {
 			return errors.Wrapf(err, "write %s", p)
 		}
 	}

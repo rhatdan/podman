@@ -45,6 +45,7 @@ github.com/blang/semver
 ## explicit
 github.com/buger/goterm
 # github.com/cespare/xxhash/v2 v2.1.2
+## explicit
 github.com/cespare/xxhash/v2
 # github.com/checkpoint-restore/checkpointctl v0.0.0-20211204171957-54b4ebfdb681
 ## explicit
@@ -627,7 +628,7 @@ github.com/seccomp/libseccomp-golang
 ## explicit
 github.com/sirupsen/logrus
 github.com/sirupsen/logrus/hooks/syslog
-# github.com/spf13/cobra v1.3.0
+# github.com/spf13/cobra v1.5.0
 ## explicit
 github.com/spf13/cobra
 # github.com/spf13/pflag v1.0.5
@@ -770,10 +771,13 @@ golang.org/x/text/transform
 golang.org/x/text/unicode/bidi
 golang.org/x/text/unicode/norm
 # golang.org/x/tools v0.1.5
+## explicit
 golang.org/x/tools/go/ast/inspector
 # google.golang.org/genproto v0.0.0-20211208223120-3a66f561d7aa
+## explicit
 google.golang.org/genproto/googleapis/rpc/status
 # google.golang.org/grpc v1.42.0
+## explicit
 google.golang.org/grpc
 google.golang.org/grpc/attributes
 google.golang.org/grpc/backoff

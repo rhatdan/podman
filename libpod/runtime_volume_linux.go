@@ -15,6 +15,7 @@ import (
 	"github.com/containers/podman/v4/libpod/events"
 	volplugin "github.com/containers/podman/v4/libpod/plugin"
 	"github.com/containers/storage/drivers/quota"
+	"github.com/containers/storage/pkg/idtools"
 	"github.com/containers/storage/pkg/stringid"
 	pluginapi "github.com/docker/go-plugins-helpers/volume"
 	"github.com/pkg/errors"
@@ -101,7 +102,7 @@ func (r *Runtime) newVolume(noCreatePluginVolume bool, options ...VolumeCreateOp
 		if err := os.MkdirAll(volPathRoot, 0700); err != nil {
 			return nil, errors.Wrapf(err, "creating volume directory %q", volPathRoot)
 		}
-		if err := os.Chown(volPathRoot, volume.config.UID, volume.config.GID); err != nil {
+		if err := idtools.SafeChown(volPathRoot, volume.config.UID, volume.config.GID); err != nil {
 			return nil, errors.Wrapf(err, "chowning volume directory %q to %d:%d", volPathRoot, volume.config.UID, volume.config.GID)
 		}
 		fullVolPath := filepath.Join(volPathRoot, "_data")

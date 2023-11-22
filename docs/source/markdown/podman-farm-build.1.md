@@ -465,6 +465,10 @@ option.
 
 [//]: # (END   included file options/env.image.md)
 
+#### **--farm=**
+
+Farm to use for builds
+
 
 [//]: # (BEGIN included file options/file.md)
 #### **--file**, **-f**=*Containerfile*
@@ -1299,9 +1303,9 @@ mount for `/foo`, then use `mount --make-shared /` to convert `/` into a
 ```
 $ podman farm build --local -t name -f /path/to/containerfile .
 
-$ podman farm --farm build myfarm -t name .
+$ podman farm build --farm myfarm -t name .
 
-$ podman farm --farm myfarm build --cleanup -t name .
+$ podman farm build --farm myfarm --cleanup -t name .
 
 $ podman farm build --platforms arm64,amd64 --cleanup -t name .
 ```

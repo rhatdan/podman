@@ -87,6 +87,10 @@ It does not affect _/etc/resolv.conf_ in the final image.
 
 @@option env.image
 
+#### **--farm=**
+
+Farm to use for builds
+
 @@option file
 
 @@option force-rm
@@ -210,9 +214,9 @@ Build only on farm nodes that match the given platforms.
 ```
 $ podman farm build --local -t name -f /path/to/containerfile .
 
-$ podman farm --farm build myfarm -t name .
+$ podman farm build --farm myfarm -t name .
 
-$ podman farm --farm myfarm build --cleanup -t name .
+$ podman farm build --farm myfarm --cleanup -t name .
 
 $ podman farm build --platforms arm64,amd64 --cleanup -t name .
 ```

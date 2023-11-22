@@ -34,6 +34,11 @@ var (
 	buildOpts = buildOptions{
 		buildOptions: common.BuildFlagsWrapper{},
 	}
+
+	// Temporary struct to hold cli values.
+	farmOpts = struct {
+		Farm string
+	}{}
 )
 
 func init() {
@@ -54,6 +59,10 @@ func init() {
 	platformsFlag := "platforms"
 	buildCommand.PersistentFlags().StringSliceVar(&buildOpts.platforms, platformsFlag, nil, "Build only on farm nodes that match the given platforms")
 
+	podmanConfig := registry.PodmanConfig()
+	defaultFarm := podmanConfig.ContainersConfDefaultsRO.Farms.Default
+	farmFlagName := "farm"
+	flags.StringVar(&farmOpts.Farm, farmFlagName, defaultFarm, "Farm to use for builds")
 	common.DefineBuildFlags(buildCommand, &buildOpts.buildOptions, true)
 }
 

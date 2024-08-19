@@ -83,8 +83,10 @@ func (vf *Helper) stateChange(newState rest.StateChange) error {
 	}
 	payload := bytes.NewReader(b)
 	serverResponse, err := vf.post(vf.Endpoint+state, payload)
-	_ = serverResponse.Body.Close()
-	return err
+	if err != nil {
+		return err
+	}
+	return serverResponse.Body.Close()
 }
 
 func (vf *Helper) Stop(force, wait bool) error {
